@@ -6,6 +6,11 @@
     <Nullable>enable</Nullable>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- 単体 exe 用の設定 -->
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
 
   <ItemGroup>
