@@ -1,4 +1,4 @@
-ï»¿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -15,36 +15,36 @@ using OpenCvSharp.Extensions;
 
 namespace reborncam
 {
- public partial class Form1 : Form
- {
- private System.Windows.Forms.Timer _thumbnailTimer;
- private PictureBox[] _previewBoxes;
- private PictureBox[] _thumbnailBoxes;
+    public partial class Form1 : Form
+    {
+        private System.Windows.Forms.Timer _thumbnailTimer;
+        private PictureBox[] _previewBoxes;
+        private PictureBox[] _thumbnailBoxes;
 
- // OpenCV é–¢é€£
- private const int MaxCameraCount =6;
- private VideoCapture[] _captures = new VideoCapture[MaxCameraCount];
- private Mat[] _latestFrames = new Mat[MaxCameraCount];
- private Bitmap[] _dispBitmaps = new Bitmap[MaxCameraCount];
- private bool[] _cameraAlive = new bool[MaxCameraCount];
- private Label[] _statusLabels;
+        // OpenCV ŠÖ˜A
+        private const int MaxCameraCount = 6;
+        private VideoCapture[] _captures = new VideoCapture[MaxCameraCount];
+        private Mat[] _latestFrames = new Mat[MaxCameraCount];
+        private Bitmap[] _dispBitmaps = new Bitmap[MaxCameraCount];
+        private bool[] _cameraAlive = new bool[MaxCameraCount];
+        private Label[] _statusLabels;
 
- private bool _cameraOpenFlag = false;
- private BackgroundWorker _previewWorker;
- private CancellationTokenSource _cameraCts;
- private Task<bool>[] _frameTasks;
+        private bool _cameraOpenFlag = false;
+        private BackgroundWorker _previewWorker;
+        private CancellationTokenSource? _cameraCts;
+        private Task<bool>[]? _frameTasks;
 
- private string _logFilePath;
- private string _diagnosticFilePath;
- private readonly object _diagLock = new object();
- private string _currentSerialNumber = string.Empty;
+        private string _logFilePath;
+        private string _diagnosticFilePath;
+        private readonly object _diagLock = new object();
+        private string _currentSerialNumber = string.Empty;
 
- // ã‚«ãƒ¡ãƒ©ãƒãƒ¼ãƒˆå‰²ã‚Šå½“ã¦ï¼ˆPictureBox ã®ã‚¤ãƒ³ãƒ‡ãƒƒã‚¯ã‚¹ â†’ ã‚«ãƒ¡ãƒ©ãƒ‡ãƒã‚¤ã‚¹ã‚¤ãƒ³ãƒ‡ãƒƒã‚¯ã‚¹ï¼‰
- private int[] _cameraPortAssignments = new int[MaxCameraCount] {0,1,2,3,4,5 };
+        // ƒJƒƒ‰ƒ|[ƒgŠ„‚è“–‚ÄiPictureBox ‚ÌƒCƒ“ƒfƒbƒNƒX ¨ ƒJƒƒ‰ƒfƒoƒCƒXƒCƒ“ƒfƒbƒNƒXj
+        private int[] _cameraPortAssignments = new int[MaxCameraCount] { 0, 1, 2, 3, 4, 5 };
 
- // å„ã‚«ãƒ¡ãƒ©ã®éƒ¨ä½åï¼ˆå¤‰æ›´å¯èƒ½ï¼‰
- private string[] _cameraPartNames = new[]
- {
+        // ŠeƒJƒƒ‰‚Ì•”ˆÊ–¼i•ÏX‰Â”\j
+        private string[] _cameraPartNames = new[]
+        {
  "Front",
  "Back",
  "Left",
@@ -53,9 +53,9 @@ namespace reborncam
  "Bottom"
  };
 
- // éƒ¨ä½åã®é¸æŠè‚¢
- private readonly string[] _availablePartNames = new[]
- {
+        // •”ˆÊ–¼‚Ì‘I‘ğˆ
+        private readonly string[] _availablePartNames = new[]
+        {
  "Front",
  "Back",
  "Left",
@@ -67,663 +67,732 @@ namespace reborncam
  "Custom3"
  };
 
- // è§£åƒåº¦ã®å„ªå…ˆé †ä½ï¼ˆ4K â†’ æ®µéšçš„ã«ãƒ•ã‚©ãƒ¼ãƒ«ãƒãƒƒã‚¯ï¼‰
- private readonly int[,] _resolutionPresets = new int[,]
- {
+        // ‰ğ‘œ“x‚Ì—Dæ‡ˆÊi4K ¨ ’iŠK“I‚ÉƒtƒH[ƒ‹ƒoƒbƒNj
+        private readonly int[,] _resolutionPresets = new int[,]
+        {
  {3840,2160 }, //4K
  {2592,1944 },
  {1920,1080 }, // FullHD
  {1280,720 },
  {640,480 },
  {320,240 }
- };
-
- // è¨­å®šUI
- private ComboBox _portComboBox;
- private ComboBox _partNameComboBox;
- private int _selectedCameraIndex =0;
-
- public Form1()
- {
- InitializeComponent();
-
- // ãƒ­ã‚°ãƒ•ã‚©ãƒ«ãƒ€ã¨ãƒ­ã‚°ãƒ•ã‚¡ã‚¤ãƒ«ã‚’åˆæœŸåŒ–
- var logDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "log");
- Directory.CreateDirectory(logDir);
- _logFilePath = Path.Combine(logDir, "app.log");
- WriteLog("Application started");
-
- // LOFF diagnostics folder
- var diagDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "LOFF");
- Directory.CreateDirectory(diagDir);
- _diagnosticFilePath = Path.Combine(diagDir, "diagnog.log");
- // write resumed marker
- WriteDiagnostic("--- diagnostics resumed " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"));
-
- _previewBoxes = new[] { pictureBox1, pictureBox2, pictureBox3, pictureBox4, pictureBox5, pictureBox6 };
- _statusLabels = new[] { statusLabelMonitor1, statusLabelMonitor2, statusLabelMonitor3, statusLabelMonitor4, statusLabelMonitor5, statusLabelMonitor6 };
-
- _thumbnailBoxes = new PictureBox[MaxCameraCount];
- for (int i =0; i < MaxCameraCount; i++)
- {
- var thumb = new PictureBox
- {
- SizeMode = PictureBoxSizeMode.Zoom,
- BorderStyle = BorderStyle.FixedSingle,
- BackColor = Color.Black,
- Width =120,
- Height =90,
- Margin = new Padding(2)
- };
- _thumbnailBoxes[i] = thumb;
- }
-
- var thumbsPanel = new FlowLayoutPanel
- {
- Dock = DockStyle.Bottom,
- Height =100,
- FlowDirection = FlowDirection.RightToLeft,
- BackColor = Color.Black
- };
-
- for (int i =0; i < MaxCameraCount; i++)
- {
- thumbsPanel.Controls.Add(_thumbnailBoxes[i]);
- }
-
- Controls.Add(thumbsPanel);
-
- _thumbnailTimer = new System.Windows.Forms.Timer();
- _thumbnailTimer.Interval =10_000;
- _thumbnailTimer.Tick += ThumbnailTimer_Tick;
-
- // BackgroundWorkerã§ãƒ—ãƒ¬ãƒ“ãƒ¥ãƒ¼æ›´æ–°ï¼ˆPileave ã‚¹ã‚¿ã‚¤ãƒ«ï¼‰
- _previewWorker = new BackgroundWorker();
- _previewWorker.WorkerSupportsCancellation = true;
- _previewWorker.WorkerReportsProgress = true;
- _previewWorker.DoWork += PreviewWorker_DoWork;
- _previewWorker.ProgressChanged += PreviewWorker_ProgressChanged;
- _previewWorker.RunWorkerCompleted += PreviewWorker_Completed;
-
- simulationButton.Enabled = false;
-
- SetupCameraConfigUI();
- }
-
- private void SetupCameraConfigUI()
- {
- cameraSelectionComboBox.Items.Clear();
- for (int i =0; i < MaxCameraCount; i++)
- {
- cameraSelectionComboBox.Items.Add($"Camera {i +1}");
- }
-
- var portLabel = new Label
- {
- Text = "Camera Port:",
- AutoSize = true,
- Location = new System.Drawing.Point(15,210)
- };
- settingsPanel.Controls.Add(portLabel);
-
- _portComboBox = new ComboBox
- {
- DropDownStyle = ComboBoxStyle.DropDownList,
- Location = new System.Drawing.Point(3,228),
- Size = new System.Drawing.Size(154,23)
- };
- for (int i =0; i <=9; i++)
- {
- _portComboBox.Items.Add($"Port {i}");
- }
- _portComboBox.SelectedIndexChanged += PortComboBox_SelectedIndexChanged;
- settingsPanel.Controls.Add(_portComboBox);
-
- var partLabel = new Label
- {
- Text = "Part Name:",
- AutoSize = true,
- Location = new System.Drawing.Point(15,260)
- };
- settingsPanel.Controls.Add(partLabel);
-
- _partNameComboBox = new ComboBox
- {
- DropDownStyle = ComboBoxStyle.DropDownList,
- Location = new System.Drawing.Point(3,278),
- Size = new System.Drawing.Size(154,23)
- };
- _partNameComboBox.Items.AddRange(_availablePartNames);
- _partNameComboBox.SelectedIndexChanged += PartNameComboBox_SelectedIndexChanged;
- settingsPanel.Controls.Add(_partNameComboBox);
-
- UpdateConfigUI();
-
- // Now it's safe to set SelectedIndex so SelectedIndexChanged won't run before controls exist
- if (cameraSelectionComboBox.Items.Count >0)
- cameraSelectionComboBox.SelectedIndex =0;
- }
-
- private void UpdateConfigUI()
- {
- // guard against calling before UI controls exist
- if (_portComboBox != null && _partNameComboBox != null)
- {
- _portComboBox.SelectedIndex = Math.Clamp(_cameraPortAssignments[_selectedCameraIndex],0, _portComboBox.Items.Count -1);
- var currentPart = _cameraPartNames[_selectedCameraIndex];
- var idx = Array.IndexOf(_availablePartNames, currentPart);
- _partNameComboBox.SelectedIndex = idx >=0 ? idx :0;
- }
- }
-
- private async void Form1_Load_1(object? sender, EventArgs e)
- {
- WriteLog("Form1_Load: Initializing cameras...");
- statusLabel.Text = "Opening cameras...";
-
- _cameraOpenFlag = true;
-
- // åˆæœŸåŒ–ç”»é¢ã‚’è¡¨ç¤º
- for (int i =0; i < MaxCameraCount; i++)
- {
- _statusLabels[i].Text = $"Camera{i +1}\nOpening...";
- _statusLabels[i].BackColor = Color.Gray;
- }
-
- // ã‚«ãƒ¡ãƒ©ã‚’ä¸¦åˆ—ã§é«˜é€Ÿã‚ªãƒ¼ãƒ—ãƒ³
- var openTasks = new Task<bool>[MaxCameraCount];
- for (int i =0; i < MaxCameraCount; i++)
- {
- int index = i;
- openTasks[i] = Task.Run(() => OpenCameraDevice(index));
- }
-
- var results = await Task.WhenAll(openTasks);
-
- // ã‚«ãƒ¡ãƒ©çŠ¶æ…‹ã‚’ UI ã«åæ˜ 
- for (int i =0; i < MaxCameraCount; i++)
- {
- _cameraAlive[i] = results[i];
- UpdateCameraStatus(i);
- }
-
- WriteLog("All cameras initialized");
-
- // BackgroundWorkerã§ãƒ—ãƒ¬ãƒ“ãƒ¥ãƒ¼é–‹å§‹
- _previewWorker.RunWorkerAsync();
-
- // ãƒ•ãƒ¬ãƒ¼ãƒ å–å¾—ã‚¿ã‚¹ã‚¯ã‚’ä¸¦åˆ—èµ·å‹•ï¼ˆPileave ã‚¹ã‚¿ã‚¤ãƒ«ï¼‰
- _cameraCts = new CancellationTokenSource();
- _frameTasks = new Task<bool>[MaxCameraCount];
- for (int i =0; i < MaxCameraCount; i++)
- {
- int index = i;
- var token = _cameraCts.Token;
- _frameTasks[i] = Task.Run(() => GetCameraFrameLoop(index, token), token);
- }
-
- statusLabel.Text = "Previewing - Waiting for Serial Number...";
- WriteLog("Preview started");
-
- // ãƒãƒƒã‚¯ã‚°ãƒ©ã‚¦ãƒ³ãƒ‰ã§ç›£è¦–ï¼ˆã‚¢ãƒ—ãƒªçµ‚äº†æ™‚ã« Task ã‚’å¾…ã¤ãŸã‚ï¼‰
- _ = Task.Run(async () =>
- {
- try
- {
- await Task.WhenAll(_frameTasks.Where(t => t != null));
- }
- catch { }
- finally
- {
- if (_frameTasks != null)
- {
- foreach (var t in _frameTasks) t?.Dispose();
- _frameTasks = null;
- }
- }
- });
- }
-
- private bool OpenCameraDevice(int cameraIndex)
- {
- var port = _cameraPortAssignments[cameraIndex];
-
- try
- {
- WriteLog($"Camera {cameraIndex +1}: Attempting to open port {port}...");
-
- var cap = new VideoCapture();
- cap.Open(port, VideoCaptureAPIs.MSMF); // MSMFã§é«˜é€ŸåŒ–
-
- if (!cap.IsOpened())
- {
- WriteLog($"Camera {cameraIndex +1} (Port {port}): Failed to open");
- WriteDiagnostic(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + $" | ã‚«ãƒ¡ãƒ© {cameraIndex +1} (ãƒãƒ¼ãƒˆ {port}) ã‚’é–‹ã‘ã¾ã›ã‚“ã§ã—ãŸã€‚");
- cap.Dispose();
- return false;
- }
-
- // è§£åƒåº¦ã‚’æ®µéšçš„ã«è©¦ã™ï¼ˆ4Kå„ªå…ˆï¼‰
- bool resolutionSet = false;
- for (int r =0; r < _resolutionPresets.GetLength(0); r++)
- {
- int width = _resolutionPresets[r,0];
- int height = _resolutionPresets[r,1];
-
- cap.Set(VideoCaptureProperties.FrameWidth, width);
- cap.Set(VideoCaptureProperties.FrameHeight, height);
-
- int actualWidth = (int)cap.Get(VideoCaptureProperties.FrameWidth);
- int actualHeight = (int)cap.Get(VideoCaptureProperties.FrameHeight);
-
- if (actualWidth == width && actualHeight == height)
- {
- WriteLog($"Camera {cameraIndex +1} (Port {port}): Resolution set to {width}x{height}");
- resolutionSet = true;
- break;
- }
- }
-
- if (!resolutionSet)
- {
- var w = (int)cap.Get(VideoCaptureProperties.FrameWidth);
- var h = (int)cap.Get(VideoCaptureProperties.FrameHeight);
- WriteLog($"Camera {cameraIndex +1} (Port {port}): Using default resolution {w}x{h}");
- }
-
- cap.Set(VideoCaptureProperties.Fps,30);
-
- _captures[cameraIndex] = cap;
- _latestFrames[cameraIndex] = new Mat();
-
- WriteLog($"Camera {cameraIndex +1} (Port {port}): Opened successfully");
- return true;
- }
- catch (Exception ex)
- {
- WriteLog($"Camera {cameraIndex +1} (Port {port}): Exception - {ex.Message}");
- WriteDiagnostic(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + $" | Camera {cameraIndex +1} FAILURE | {ex.Message}");
- return false;
- }
- }
-
- private bool GetCameraFrameLoop(int cameraIndex, CancellationToken token)
- {
- if (!_cameraAlive[cameraIndex])
- {
- return false;
- }
-
- var cap = _captures[cameraIndex];
- var frame = _latestFrames[cameraIndex];
-
- while (true)
- {
- try
- {
- if (!_cameraOpenFlag || this.IsDisposed || (token != null && token.IsCancellationRequested))
- {
- break;
- }
-
- if (cap == null || !cap.IsOpened())
- {
- // ã‚«ãƒ¡ãƒ©ãŒæ­»ã‚“ã 
- _cameraAlive[cameraIndex] = false;
- WriteLog($"Camera {cameraIndex +1}: Device lost during preview");
- WriteDiagnostic(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + $" | Camera {cameraIndex +1} FAILURE | capture=null");
- break;
- }
-
- bool readSuccess = false;
- try
- {
- readSuccess = cap.Read(frame);
- }
- catch (ObjectDisposedException)
- {
- // capture was disposed from shutdown; treat as dead and exit
- _cameraAlive[cameraIndex] = false;
- WriteLog($"Camera {cameraIndex +1}: capture disposed during read");
- break;
- }
-
- if (!readSuccess || frame.Empty())
- {
- // èª­ã¿è¾¼ã¿å¤±æ•—ãŒç¶šãå ´åˆã¯æ­»ã‚“ã ã¨åˆ¤å®š
- _cameraAlive[cameraIndex] = false;
- WriteLog($"Camera {cameraIndex +1}: Frame read failed, marking as dead");
- WriteDiagnostic(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + $" | Camera {cameraIndex +1} FAILURE | capture=null");
- break;
- }
-
- // Cv2.WaitKeyã§åœæ­¢å›é¿
- Cv2.WaitKey(1);
- }
- catch (Exception ex)
- {
- _cameraAlive[cameraIndex] = false;
- WriteLog($"Camera {cameraIndex +1}: Exception in frame loop - {ex.Message}");
- break;
- }
- }
-
- //ãƒ«ãƒ¼ãƒ—çµ‚äº†æ™‚ã«ãƒªã‚½ãƒ¼ã‚¹è§£æ”¾
- // don't dispose here if cancellation is not requested; disposal will be handled on shutdown
- try { cap?.Dispose(); } catch { }
- return true;
- }
-
- private void PreviewWorker_DoWork(object? sender, DoWorkEventArgs e)
- {
- while (true)
- {
- if (_previewWorker.CancellationPending || !_cameraOpenFlag)
- {
- e.Cancel = true;
- break;
- }
-
- Thread.Sleep(33); // ç´„30fps
-
- _previewWorker.ReportProgress(1);
- }
- }
-
- private void PreviewWorker_ProgressChanged(object? sender, ProgressChangedEventArgs e)
- {
- // å¤ã„ç”»åƒã‚’ä¿æŒã—ã¦å¾Œã§ç ´æ£„
- Image[] oldImages = new Image[MaxCameraCount];
- for (int i =0; i < MaxCameraCount; i++)
- {
- oldImages[i] = _previewBoxes[i].Image;
- }
-
- // æœ€æ–°ãƒ•ãƒ¬ãƒ¼ãƒ ã‚’ Bitmap ã«å¤‰æ›ã—ã¦è¡¨ç¤º
- for (int i =0; i < MaxCameraCount; i++)
- {
- if (!_cameraAlive[i])
- {
- _dispBitmaps[i] = null;
- UpdateCameraStatus(i);
- continue;
- }
-
- var frame = _latestFrames[i];
- if (frame != null && !frame.Empty())
- {
- try
- {
- var oldBmp = _dispBitmaps[i];
- _dispBitmaps[i] = BitmapConverter.ToBitmap(frame);
- oldBmp?.Dispose();
- }
- catch
- {
- _dispBitmaps[i] = null;
- }
- }
- }
-
- // UI ã«åæ˜ 
- for (int i =0; i < MaxCameraCount; i++)
- {
- if (_dispBitmaps[i] != null)
- {
- _previewBoxes[i].Image = (Bitmap)_dispBitmaps[i].Clone();
- }
- else
- {
- _previewBoxes[i].Image = null;
- }
- }
-
- // å¤ã„ç”»åƒã‚’ç ´æ£„
- for (int i =0; i < oldImages.Length; i++)
- {
- oldImages[i]?.Dispose();
- }
- }
-
- private void PreviewWorker_Completed(object? sender, RunWorkerCompletedEventArgs e)
- {
- WriteLog("Preview worker completed");
- for (int i =0; i < MaxCameraCount; i++)
- {
- _previewBoxes[i].Image = null;
- }
- }
-
- private void UpdateCameraStatus(int cameraIndex)
- {
- if (_cameraAlive[cameraIndex])
- {
- _statusLabels[cameraIndex].Text = $"Camera{cameraIndex +1}\n{_cameraPartNames[cameraIndex]}\nOK";
- _statusLabels[cameraIndex].BackColor = Color.Green;
- }
- else
- {
- _statusLabels[cameraIndex].Text = $"Camera{cameraIndex +1}\n{_cameraPartNames[cameraIndex]}\nDEAD";
- _statusLabels[cameraIndex].BackColor = Color.Red;
- }
- }
-
- private void SerialNumberTextBox_TextChanged(object? sender, EventArgs e)
- {
- var serial = serialNumberTextBox.Text.Trim();
- if (!string.IsNullOrWhiteSpace(serial))
- {
- _currentSerialNumber = serial;
- simulationButton.Enabled = true;
- WriteLog($"Serial number entered: {serial}");
- }
- else
- {
- _currentSerialNumber = string.Empty;
- simulationButton.Enabled = false;
- }
- }
-
- private void SimulationButton_Click(object? sender, EventArgs e)
- {
- WriteLog($"Capture button clicked (Serial: {_currentSerialNumber})");
- CaptureCurrentFrames();
- }
-
- private void PreviewButton_Click(object? sender, EventArgs e)
- {
- WriteLog("Preview button clicked");
- ClearThumbnails();
- }
-
- private void CameraSelectionComboBox_SelectedIndexChanged(object? sender, EventArgs e)
- {
- _selectedCameraIndex = cameraSelectionComboBox.SelectedIndex;
- if (_selectedCameraIndex >=0 && _selectedCameraIndex < MaxCameraCount)
- {
- UpdateConfigUI();
- WriteLog($"Selected camera {_selectedCameraIndex +1} for configuration");
- }
- }
-
- private void PortComboBox_SelectedIndexChanged(object? sender, EventArgs e)
- {
- var newPort = _portComboBox.SelectedIndex;
- if (_selectedCameraIndex >=0 && _selectedCameraIndex < MaxCameraCount)
- {
- var oldPort = _cameraPortAssignments[_selectedCameraIndex];
- _cameraPortAssignments[_selectedCameraIndex] = newPort;
- WriteLog($"Camera {_selectedCameraIndex +1}: Port changed from {oldPort} to {newPort} (requires restart)");
- }
- }
-
- private void PartNameComboBox_SelectedIndexChanged(object? sender, EventArgs e)
- {
- var newPart = _partNameComboBox.SelectedItem?.ToString();
- if (!string.IsNullOrEmpty(newPart) && _selectedCameraIndex >=0 && _selectedCameraIndex < MaxCameraCount)
- {
- var oldPart = _cameraPartNames[_selectedCameraIndex];
- _cameraPartNames[_selectedCameraIndex] = newPart;
- WriteLog($"Camera {_selectedCameraIndex +1}: Part name changed from {oldPart} to {newPart}");
- UpdateCameraStatus(_selectedCameraIndex);
- }
- }
-
- private void BrightnessTrackBar_Scroll(object? sender, EventArgs e)
- {
- // TODO: é¸æŠä¸­ã®ã‚«ãƒ¡ãƒ©ã®æ˜ã‚‹ã•åˆ¶å¾¡
- }
-
- private void ContrastTrackBar_Scroll(object? sender, EventArgs e)
- {
- // TODO: é¸æŠä¸­ã®ã‚«ãƒ¡ãƒ©ã®ã‚³ãƒ³ãƒˆãƒ©ã‚¹ãƒˆåˆ¶å¾¡
- }
-
- private void CaptureCurrentFrames()
- {
- var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
- var logDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "log");
- var tempDir = Path.Combine(logDir, timestamp);
- var zipPath = Path.Combine(logDir, $"{_currentSerialNumber}_{timestamp}.zip");
-
- try
- {
- Directory.CreateDirectory(tempDir);
- WriteLog($"Capture started: Serial={_currentSerialNumber}, Saving to {_currentSerialNumber}_{timestamp}.zip");
-
- int savedCount =0;
- for (int i =0; i < _previewBoxes.Length; i++)
- {
- var src = _previewBoxes[i].Image;
- if (src != null && _cameraAlive[i])
- {
- _thumbnailBoxes[i].Image?.Dispose();
- _thumbnailBoxes[i].Image = new Bitmap(src);
-
- var partName = _cameraPartNames[i];
- var fileName = $"{_currentSerialNumber}_{partName}_{timestamp}.jpg";
- var filePath = Path.Combine(tempDir, fileName);
- src.Save(filePath, ImageFormat.Jpeg);
- savedCount++;
- WriteLog($" Camera {i +1} (Port {_cameraPortAssignments[i]}, {partName}): Saved as {fileName}");
- }
- else if (!_cameraAlive[i])
- {
- WriteLog($" Camera {i +1}: Skipped (camera dead)");
- }
- }
-
- if (savedCount >0)
- {
- ZipFile.CreateFromDirectory(tempDir, zipPath, CompressionLevel.Fastest, false);
- WriteLog($"Capture completed: {savedCount} images saved to {_currentSerialNumber}_{timestamp}.zip");
- statusLabel.Text = $"Captured {savedCount} images";
- }
- else
- {
- WriteLog("Capture completed: No images saved (all cameras dead)");
- statusLabel.Text = "Capture failed - No cameras available";
- }
-
- Directory.Delete(tempDir, true);
-
- serialNumberTextBox.Clear();
- simulationButton.Enabled = false;
- WriteLog("Ready for next serial number");
- }
- catch (Exception ex)
- {
- WriteLog($"Capture error: {ex.Message}");
- MessageBox.Show($"æ’®å½±ã‚¨ãƒ©ãƒ¼: {ex.Message}", "ã‚¨ãƒ©ãƒ¼", MessageBoxButtons.OK, MessageBoxIcon.Error);
- }
-
- _thumbnailTimer.Stop();
- _thumbnailTimer.Start();
- }
-
- private void ThumbnailTimer_Tick(object? sender, EventArgs e)
- {
- _thumbnailTimer.Stop();
- ClearThumbnails();
- }
-
- private void ClearThumbnails()
- {
- for (int i =0; i < _thumbnailBoxes.Length; i++)
- {
- _thumbnailBoxes[i].Image?.Dispose();
- _thumbnailBoxes[i].Image = null;
- }
- }
-
- protected override void OnFormClosing(FormClosingEventArgs e)
- {
- base.OnFormClosing(e);
-
- WriteLog("Application closing: Releasing cameras...");
-
- // signal cancellation to frame tasks and preview worker
- _cameraOpenFlag = false;
- _previewWorker.CancelAsync();
- _cameraCts?.Cancel();
-
- // wait for frame tasks to finish (up to2 seconds)
- try
- {
- if (_frameTasks != null)
- {
- Task.WaitAll(_frameTasks.Where(t => t != null).ToArray(),2000);
- }
- }
- catch { }
-
- // now safe to dispose resources
- for (int i =0; i < MaxCameraCount; i++)
- {
- try { _previewBoxes[i].Image?.Dispose(); _previewBoxes[i].Image = null; } catch { }
- try { _thumbnailBoxes[i].Image?.Dispose(); _thumbnailBoxes[i].Image = null; } catch { }
- try { _dispBitmaps[i]?.Dispose(); _dispBitmaps[i] = null; } catch { }
- try { _latestFrames[i]?.Dispose(); _latestFrames[i] = null!; } catch { }
- try { _captures[i]?.Release(); _captures[i]?.Dispose(); _captures[i] = null!; } catch { }
- }
-
- _cameraCts?.Dispose();
- _cameraCts = null;
-
- WriteLog("Application closed");
- }
-
- private void WriteLog(string message)
- {
- try
- {
- var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} | {message}";
- File.AppendAllText(_logFilePath, line + Environment.NewLine);
- Debug.WriteLine(line);
- }
- catch
- {
- // ãƒ­ã‚°æ›¸ãè¾¼ã¿ã‚¨ãƒ©ãƒ¼ã¯ç„¡è¦–
- }
- }
-
- /// <summary>
- /// Diagnostic log written to LOFF\diagnog.log (thread-safe)
- /// </summary>
- private void WriteDiagnostic(string message)
- {
- try
- {
- lock (_diagLock)
- {
- File.AppendAllText(_diagnosticFilePath, message + Environment.NewLine);
- }
- Debug.WriteLine("DIAG: " + message);
- }
- catch
- {
- // ignore
- }
- }
- }
+        };
+
+        // İ’èUI
+        private ComboBox? _portComboBox;
+        private ComboBox? _partNameComboBox;
+        private int _selectedCameraIndex = 0;
+
+        // Open strategy tuning (speed vs stability)
+        // Timeout was removed because OpenCV MSMF open cannot be cancelled; timing out would leave background opens running.
+        private const int MaxOpenParallelism =2;
+        private const int FrameValidationTries =5;
+        private const int FrameValidationDelayMs =80;
+
+        public Form1()
+        {
+            InitializeComponent();
+
+            // ƒƒOƒtƒHƒ‹ƒ_‚ÆƒƒOƒtƒ@ƒCƒ‹‚ğ‰Šú‰»
+            var logDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "log");
+            Directory.CreateDirectory(logDir);
+            _logFilePath = Path.Combine(logDir, "app.log");
+            WriteLog("Application started");
+
+            // LOFF diagnostics folder
+            var diagDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "LOFF");
+            Directory.CreateDirectory(diagDir);
+            _diagnosticFilePath = Path.Combine(diagDir, "diagnog.log");
+            // write resumed marker
+            WriteDiagnostic("--- diagnostics resumed " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"));
+
+            _previewBoxes = new[] { pictureBox1, pictureBox2, pictureBox3, pictureBox4, pictureBox5, pictureBox6 };
+            _statusLabels = new[] { statusLabelMonitor1, statusLabelMonitor2, statusLabelMonitor3, statusLabelMonitor4, statusLabelMonitor5, statusLabelMonitor6 };
+
+            _thumbnailBoxes = new PictureBox[MaxCameraCount];
+            for (int i = 0; i < MaxCameraCount; i++)
+            {
+                var thumb = new PictureBox
+                {
+                    SizeMode = PictureBoxSizeMode.Zoom,
+                    BorderStyle = BorderStyle.FixedSingle,
+                    BackColor = Color.FromArgb(180, 0, 0, 0),
+                    Visible = false
+                };
+                _thumbnailBoxes[i] = thumb;
+            }
+
+            // Create overlay thumbnails (child of each preview)
+            for (int i = 0; i < MaxCameraCount; i++)
+            {
+                int idx = i;
+                var pb = _previewBoxes[idx];
+                var overlay = _thumbnailBoxes[idx];
+                overlay.Parent = pb;
+                overlay.BringToFront();
+                pb.SizeChanged += (s, e) => RepositionOverlay(idx);
+                RepositionOverlay(idx);
+            }
+
+            _thumbnailTimer = new System.Windows.Forms.Timer();
+            _thumbnailTimer.Interval = 10_000;
+            _thumbnailTimer.Tick += ThumbnailTimer_Tick;
+
+            // BackgroundWorker‚ÅƒvƒŒƒrƒ…[XViPileave ƒXƒ^ƒCƒ‹j
+            _previewWorker = new BackgroundWorker();
+            _previewWorker.WorkerSupportsCancellation = true;
+            _previewWorker.WorkerReportsProgress = true;
+            _previewWorker.DoWork += PreviewWorker_DoWork;
+            _previewWorker.ProgressChanged += PreviewWorker_ProgressChanged;
+            _previewWorker.RunWorkerCompleted += PreviewWorker_Completed;
+
+            simulationButton.Enabled = false;
+
+            SetupCameraConfigUI();
+        }
+
+        private void SetupCameraConfigUI()
+        {
+            cameraSelectionComboBox.Items.Clear();
+            for (int i = 0; i < MaxCameraCount; i++)
+            {
+                cameraSelectionComboBox.Items.Add($"Camera {i + 1}");
+            }
+
+            var portLabel = new Label
+            {
+                Text = "Camera Port:",
+                AutoSize = true,
+                Location = new System.Drawing.Point(15, 210)
+            };
+            settingsPanel.Controls.Add(portLabel);
+
+            _portComboBox = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Location = new System.Drawing.Point(3, 228),
+                Size = new System.Drawing.Size(154, 23)
+            };
+            for (int i = 0; i <= 9; i++)
+            {
+                _portComboBox.Items.Add($"Port {i}");
+            }
+            _portComboBox.SelectedIndexChanged += PortComboBox_SelectedIndexChanged;
+            settingsPanel.Controls.Add(_portComboBox);
+
+            var partLabel = new Label
+            {
+                Text = "Part Name:",
+                AutoSize = true,
+                Location = new System.Drawing.Point(15, 260)
+            };
+            settingsPanel.Controls.Add(partLabel);
+
+            _partNameComboBox = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Location = new System.Drawing.Point(3, 278),
+                Size = new System.Drawing.Size(154, 23)
+            };
+            _partNameComboBox.Items.AddRange(_availablePartNames);
+            _partNameComboBox.SelectedIndexChanged += PartNameComboBox_SelectedIndexChanged;
+            settingsPanel.Controls.Add(_partNameComboBox);
+
+            UpdateConfigUI();
+
+            // Now it's safe to set SelectedIndex so SelectedIndexChanged won't run before controls exist
+            if (cameraSelectionComboBox.Items.Count > 0)
+                cameraSelectionComboBox.SelectedIndex = 0;
+        }
+
+        private void UpdateConfigUI()
+        {
+            // guard against calling before UI controls exist
+            if (_portComboBox != null && _partNameComboBox != null)
+            {
+                _portComboBox.SelectedIndex = Math.Clamp(_cameraPortAssignments[_selectedCameraIndex], 0, _portComboBox.Items.Count - 1);
+                var currentPart = _cameraPartNames[_selectedCameraIndex];
+                var idx = Array.IndexOf(_availablePartNames, currentPart);
+                _partNameComboBox.SelectedIndex = idx >= 0 ? idx : 0;
+            }
+        }
+
+        private async void Form1_Load_1(object? sender, EventArgs e)
+        {
+            var initSw = Stopwatch.StartNew();
+            WriteLog("Form1_Load: Initializing cameras...");
+            statusLabel.Text = "Opening cameras...";
+
+            _cameraOpenFlag = true;
+
+            // ‰Šú‰»‰æ–Ê‚ğ•\¦
+            for (int i = 0; i < MaxCameraCount; i++)
+            {
+                _statusLabels[i].Text = $"Camera{i + 1}\nOpening...";
+                _statusLabels[i].BackColor = Color.Gray;
+            }
+
+            // ˆÀ’è—Dæ:1‘ä‚¸‚Â4K¨’iŠK“IƒtƒH[ƒ‹ƒoƒbƒN‚ÅŠJ‚­B
+            //‘¬“x‰ü‘P‚Æ‚µ‚ÄA“¯ƒI[ƒvƒ“”‚¾‚¯§ŒÀ‚µ‚Ä•À—ñ‰»‚·‚éB
+            var results = await OpenAllCamerasWithLimitedParallelismAsync();
+
+            // ƒJƒƒ‰ó‘Ô‚ğ UI ‚É”½‰f
+            for (int i = 0; i < MaxCameraCount; i++)
+            {
+                _cameraAlive[i] = results[i];
+                UpdateCameraStatus(i);
+            }
+
+            WriteLog("All cameras initialized");
+            WriteLog($"Camera initialization total: {initSw.ElapsedMilliseconds} ms");
+
+            // BackgroundWorker‚ÅƒvƒŒƒrƒ…[ŠJn
+            _previewWorker.RunWorkerAsync();
+
+            // ƒtƒŒ[ƒ€æ“¾ƒ^ƒXƒN‚ğ•À—ñ‹N“®iPileave ƒXƒ^ƒCƒ‹j
+            _cameraCts = new CancellationTokenSource();
+            _frameTasks = new Task<bool>[MaxCameraCount];
+            for (int i = 0; i < MaxCameraCount; i++)
+            {
+                int index = i;
+                var token = _cameraCts.Token;
+                _frameTasks[i] = Task.Run(() => GetCameraFrameLoop(index, token), token);
+            }
+
+            statusLabel.Text = "Previewing - Waiting for Serial Number...";
+            WriteLog("Preview started");
+
+            // ƒoƒbƒNƒOƒ‰ƒEƒ“ƒh‚ÅŠÄ‹iƒAƒvƒŠI—¹‚É Task ‚ğ‘Ò‚Â‚½‚ßj
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.WhenAll(_frameTasks.Where(t => t != null));
+                }
+                catch { }
+                finally
+                {
+                    if (_frameTasks != null)
+                    {
+                        foreach (var t in _frameTasks) t?.Dispose();
+                        _frameTasks = null;
+                    }
+                }
+            });
+        }
+
+        private void RepositionOverlay(int idx)
+        {
+            if (idx < 0 || idx >= MaxCameraCount) return;
+            var pb = _previewBoxes[idx];
+            var overlay = _thumbnailBoxes[idx];
+
+            int w = Math.Max(64, pb.ClientSize.Width / 2);
+            int h = Math.Max(48, pb.ClientSize.Height / 2);
+            overlay.Size = new System.Drawing.Size(w, h);
+            overlay.Location = new System.Drawing.Point(Math.Max(2, pb.ClientSize.Width - w - 4), Math.Max(2, pb.ClientSize.Height - h - 4));
+        }
+
+        private async Task<bool[]> OpenAllCamerasWithLimitedParallelismAsync()
+        {
+            var results = new bool[MaxCameraCount];
+            using var throttler = new SemaphoreSlim(MaxOpenParallelism);
+
+            var tasks = Enumerable.Range(0, MaxCameraCount).Select(async i =>
+            {
+                await throttler.WaitAsync();
+                try
+                {
+                    // open without timeout for stability
+                    results[i] = await Task.Run(() => OpenCameraDevice(i));
+                }
+                finally
+                {
+                    throttler.Release();
+                }
+            }).ToArray();
+
+            await Task.WhenAll(tasks);
+            return results;
+        }
+
+        private bool OpenCameraDevice(int cameraIndex)
+        {
+            var port = _cameraPortAssignments[cameraIndex];
+            var sw = Stopwatch.StartNew();
+
+            try
+            {
+                WriteLog($"Camera {cameraIndex +1}: Attempting to open port {port}...");
+
+                // ‰ğ‘œ“x‚ğ’iŠK“I‚É‚·i4K—Dæj
+                for (int r =0; r < _resolutionPresets.GetLength(0); r++)
+                {
+                    int width = _resolutionPresets[r,0];
+                    int height = _resolutionPresets[r,1];
+
+                    var parameters = new int[]
+                    {
+                        (int)VideoCaptureProperties.FrameWidth, width,
+                        (int)VideoCaptureProperties.FrameHeight, height,
+                        (int)VideoCaptureProperties.Fps, 30
+                    };
+
+                    var cap = new VideoCapture(port, VideoCaptureAPIs.MSMF, parameters);
+
+                    if (cap.IsOpened())
+                    {
+                        int actualWidth = (int)cap.Get(VideoCaptureProperties.FrameWidth);
+                        int actualHeight = (int)cap.Get(VideoCaptureProperties.FrameHeight);
+
+                        if (actualWidth == width && actualHeight == height)
+                        {
+                            WriteLog($"Camera {cameraIndex +1} (Port {port}): Resolution set to {width}x{height}");
+                            _captures[cameraIndex] = cap;
+                            _latestFrames[cameraIndex] = new Mat();
+                            WriteLog($"Camera {cameraIndex +1} (Port {port}): Opened successfully in {sw.ElapsedMilliseconds} ms");
+                            return true;
+                        }
+                        else
+                        {
+                            WriteLog($"Camera {cameraIndex +1} (Port {port}): Resolution {width}x{height} not accepted (actual {actualWidth}x{actualHeight}); trying next preset");
+                            cap.Dispose(); // İ’è‚ª‡‚í‚È‚¢‚Ì‚Å”jŠü‚µ‚ÄŸ‚Ö
+                        }
+                    }
+                    else
+                    {
+                        WriteLog($"Camera {cameraIndex +1} (Port {port}): Failed to open with resolution {width}x{height}");
+                        cap.Dispose();
+                    }
+                }
+
+                // ‚Ç‚ÌƒvƒŠƒZƒbƒg‚Å‚àŠJ‚¯‚È‚©‚Á‚½ê‡
+                WriteLog($"Camera {cameraIndex +1} (Port {port}): Failed to open with any preset resolution.");
+                WriteDiagnostic(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + $" | ƒJƒƒ‰ {cameraIndex +1} (ƒ|[ƒg {port}) ‚ğ‚Ç‚Ì‰ğ‘œ“x‚Å‚àŠJ‚¯‚Ü‚¹‚ñ‚Å‚µ‚½B");
+                WriteLog($"Camera {cameraIndex +1} (Port {port}): Open failed in {sw.ElapsedMilliseconds} ms");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                WriteLog($"Camera {cameraIndex +1} (Port {port}): Exception - {ex.Message}");
+                WriteDiagnostic(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + $" | Camera {cameraIndex +1} FAILURE | {ex.Message}");
+                WriteLog($"Camera {cameraIndex +1} (Port {port}): Open threw after {sw.ElapsedMilliseconds} ms");
+                return false;
+            }
+        }
+
+        private bool TryReadValidFrame(VideoCapture cap)
+        {
+            try
+            {
+                using var mat = new Mat();
+                for (int i =0; i < FrameValidationTries; i++)
+                {
+                    if (cap.Read(mat) && !mat.Empty())
+                        return true;
+                    Thread.Sleep(FrameValidationDelayMs);
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        private bool GetCameraFrameLoop(int cameraIndex, CancellationToken token)
+        {
+            if (!_cameraAlive[cameraIndex])
+            {
+                return false;
+            }
+
+            var cap = _captures[cameraIndex];
+            var frame = _latestFrames[cameraIndex];
+
+            while (true)
+            {
+                try
+                {
+                    if (!_cameraOpenFlag || this.IsDisposed || token.IsCancellationRequested)
+                    {
+                        break;
+                    }
+
+                    if (cap == null || !cap.IsOpened())
+                    {
+                        // ƒJƒƒ‰‚ª€‚ñ‚¾
+                        _cameraAlive[cameraIndex] = false;
+                        WriteLog($"Camera {cameraIndex + 1}: Device lost during preview");
+                        WriteDiagnostic(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + $" | Camera {cameraIndex + 1} FAILURE | capture=null");
+                        break;
+                    }
+
+                    bool readSuccess = false;
+                    try
+                    {
+                        readSuccess = cap.Read(frame);
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        // capture was disposed from shutdown; treat as dead and exit
+                        _cameraAlive[cameraIndex] = false;
+                        WriteLog($"Camera {cameraIndex + 1}: capture disposed during read");
+                        break;
+                    }
+
+                    if (!readSuccess || frame.Empty())
+                    {
+                        // “Ç‚İ‚İ¸”s‚ª‘±‚­ê‡‚Í€‚ñ‚¾‚Æ”»’è
+                        _cameraAlive[cameraIndex] = false;
+                        WriteLog($"Camera {cameraIndex + 1}: Frame read failed, marking as dead");
+                        WriteDiagnostic(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + $" | Camera {cameraIndex + 1} FAILURE | capture=null");
+                        break;
+                    }
+
+                    // Cv2.WaitKey‚Å’â~‰ñ”ğ
+                    Cv2.WaitKey(1);
+                }
+                catch (Exception ex)
+                {
+                    _cameraAlive[cameraIndex] = false;
+                    WriteLog($"Camera {cameraIndex + 1}: Exception in frame loop - {ex.Message}");
+                    break;
+                }
+            }
+
+            //ƒ‹[ƒvI—¹‚ÉƒŠƒ\[ƒX‰ğ•ú
+            // don't dispose here if cancellation is not requested; disposal will be handled on shutdown
+            try { cap?.Dispose(); } catch { }
+            return true;
+        }
+
+        private void PreviewWorker_DoWork(object? sender, DoWorkEventArgs e)
+        {
+            while (true)
+            {
+                if (_previewWorker.CancellationPending || !_cameraOpenFlag)
+                {
+                    e.Cancel = true;
+                    break;
+                }
+
+                Thread.Sleep(33); // –ñ30fps
+
+                _previewWorker.ReportProgress(1);
+            }
+        }
+
+        private void PreviewWorker_ProgressChanged(object? sender, ProgressChangedEventArgs e)
+        {
+            // ŒÃ‚¢‰æ‘œ‚ğ•Û‚µ‚ÄŒã‚Å”jŠü
+            Image[] oldImages = new Image[MaxCameraCount];
+            for (int i = 0; i < MaxCameraCount; i++)
+            {
+                oldImages[i] = _previewBoxes[i].Image;
+            }
+
+            // ÅVƒtƒŒ[ƒ€‚ğ Bitmap ‚É•ÏŠ·‚µ‚Ä•\¦
+            for (int i = 0; i < MaxCameraCount; i++)
+            {
+                if (!_cameraAlive[i])
+                {
+                    _dispBitmaps[i] = null;
+                    UpdateCameraStatus(i);
+                    continue;
+                }
+
+                var frame = _latestFrames[i];
+                if (frame != null && !frame.Empty())
+                {
+                    try
+                    {
+                        var oldBmp = _dispBitmaps[i];
+                        _dispBitmaps[i] = BitmapConverter.ToBitmap(frame);
+                        oldBmp?.Dispose();
+                    }
+                    catch
+                    {
+                        _dispBitmaps[i] = null;
+                    }
+                }
+            }
+
+            // UI ‚É”½‰f
+            for (int i = 0; i < MaxCameraCount; i++)
+            {
+                if (_dispBitmaps[i] != null)
+                {
+                    _previewBoxes[i].Image = (Bitmap)_dispBitmaps[i].Clone();
+                }
+                else
+                {
+                    _previewBoxes[i].Image = null;
+                }
+            }
+
+            // ŒÃ‚¢‰æ‘œ‚ğ”jŠü
+            for (int i = 0; i < oldImages.Length; i++)
+            {
+                oldImages[i]?.Dispose();
+            }
+        }
+
+        private void PreviewWorker_Completed(object? sender, RunWorkerCompletedEventArgs e)
+        {
+            WriteLog("Preview worker completed");
+            for (int i = 0; i < MaxCameraCount; i++)
+            {
+                _previewBoxes[i].Image = null;
+            }
+        }
+
+        private void UpdateCameraStatus(int cameraIndex)
+        {
+            if (_cameraAlive[cameraIndex])
+            {
+                _statusLabels[cameraIndex].Text = $"Camera{cameraIndex + 1}\n{_cameraPartNames[cameraIndex]}\nOK";
+                _statusLabels[cameraIndex].BackColor = Color.Green;
+            }
+            else
+            {
+                _statusLabels[cameraIndex].Text = $"Camera{cameraIndex + 1}\n{_cameraPartNames[cameraIndex]}\nDEAD";
+                _statusLabels[cameraIndex].BackColor = Color.Red;
+            }
+        }
+
+        private void SerialNumberTextBox_TextChanged(object? sender, EventArgs e)
+        {
+            var serial = serialNumberTextBox.Text.Trim();
+            if (!string.IsNullOrWhiteSpace(serial))
+            {
+                _currentSerialNumber = serial;
+                simulationButton.Enabled = true;
+                WriteLog($"Serial number entered: {serial}");
+            }
+            else
+            {
+                _currentSerialNumber = string.Empty;
+                simulationButton.Enabled = false;
+            }
+        }
+
+        private void SimulationButton_Click(object? sender, EventArgs e)
+        {
+            WriteLog($"Capture button clicked (Serial: {_currentSerialNumber})");
+            CaptureCurrentFrames();
+        }
+
+        private void PreviewButton_Click(object? sender, EventArgs e)
+        {
+            WriteLog("Preview button clicked");
+            ClearThumbnails();
+        }
+
+        private void CameraSelectionComboBox_SelectedIndexChanged(object? sender, EventArgs e)
+        {
+            _selectedCameraIndex = cameraSelectionComboBox.SelectedIndex;
+            if (_selectedCameraIndex >= 0 && _selectedCameraIndex < MaxCameraCount)
+            {
+                UpdateConfigUI();
+                WriteLog($"Selected camera {_selectedCameraIndex + 1} for configuration");
+            }
+        }
+
+        private void PortComboBox_SelectedIndexChanged(object? sender, EventArgs e)
+        {
+            var newPort = _portComboBox.SelectedIndex;
+            if (_selectedCameraIndex >= 0 && _selectedCameraIndex < MaxCameraCount)
+            {
+                var oldPort = _cameraPortAssignments[_selectedCameraIndex];
+                _cameraPortAssignments[_selectedCameraIndex] = newPort;
+                WriteLog($"Camera {_selectedCameraIndex + 1}: Port changed from {oldPort} to {newPort} (requires restart)");
+            }
+        }
+
+        private void PartNameComboBox_SelectedIndexChanged(object? sender, EventArgs e)
+        {
+            var newPart = _partNameComboBox.SelectedItem?.ToString();
+            if (!string.IsNullOrEmpty(newPart) && _selectedCameraIndex >= 0 && _selectedCameraIndex < MaxCameraCount)
+            {
+                var oldPart = _cameraPartNames[_selectedCameraIndex];
+                _cameraPartNames[_selectedCameraIndex] = newPart;
+                WriteLog($"Camera {_selectedCameraIndex + 1}: Part name changed from {oldPart} to {newPart}");
+                UpdateCameraStatus(_selectedCameraIndex);
+            }
+        }
+
+        private void BrightnessTrackBar_Scroll(object? sender, EventArgs e)
+        {
+            // TODO: ‘I‘ğ’†‚ÌƒJƒƒ‰‚Ì–¾‚é‚³§Œä
+        }
+
+        private void ContrastTrackBar_Scroll(object? sender, EventArgs e)
+        {
+            // TODO: ‘I‘ğ’†‚ÌƒJƒƒ‰‚ÌƒRƒ“ƒgƒ‰ƒXƒg§Œä
+        }
+
+        private void CaptureCurrentFrames()
+        {
+            var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            var logDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "log");
+            var tempDir = Path.Combine(logDir, timestamp);
+            var zipPath = Path.Combine(logDir, $"{_currentSerialNumber}_{timestamp}.zip");
+
+            try
+            {
+                Directory.CreateDirectory(tempDir);
+                WriteLog($"Capture started: Serial={_currentSerialNumber}, Saving to {_currentSerialNumber}_{timestamp}.zip");
+
+                int savedCount = 0;
+                for (int i = 0; i < MaxCameraCount; i++)
+                {
+                    // Prefer saving from full-resolution Mat if available
+                    Mat? mat = null;
+                    try
+                    {
+                        var srcMat = _latestFrames[i];
+                        if (_cameraAlive[i] && srcMat != null && !srcMat.Empty())
+                        {
+                            mat = srcMat.Clone();
+                        }
+                    }
+                    catch { mat = null; }
+
+                    if (mat != null)
+                    {
+                        try
+                        {
+                            var partName = _cameraPartNames[i];
+                            var fileName = $"{_currentSerialNumber}_{partName}_{timestamp}.jpg";
+                            var filePath = Path.Combine(tempDir, fileName);
+
+                            // Save full-resolution JPEG
+                            Cv2.ImWrite(filePath, mat);
+                            savedCount++;
+
+                            // Show overlay thumbnail for 10 seconds
+                            try
+                            {
+                                using var thumbBmp = BitmapConverter.ToBitmap(mat);
+                                _thumbnailBoxes[i].InvokeIfRequired(() =>
+                                {
+                                    _thumbnailBoxes[i].Image?.Dispose();
+                                    _thumbnailBoxes[i].Image = new Bitmap(thumbBmp);
+                                    _thumbnailBoxes[i].Visible = true;
+                                    RepositionOverlay(i);
+                                });
+                            }
+                            catch { }
+                        }
+                        finally
+                        {
+                            mat.Dispose();
+                        }
+                    }
+                }
+
+                // create zip
+                if (File.Exists(zipPath))
+                {
+                    try { File.Delete(zipPath); } catch { }
+                }
+                ZipFile.CreateFromDirectory(tempDir, zipPath, CompressionLevel.Fastest, false);
+
+                // keep tempDir? remove to avoid accumulating
+                try { Directory.Delete(tempDir, true); } catch { }
+
+                WriteLog($"Capture finished: {savedCount} files zipped to {zipPath}");
+            }
+            catch (Exception ex)
+            {
+                WriteLog($"Capture error: {ex.Message}");
+                MessageBox.Show($"B‰eƒGƒ‰[: {ex.Message}", "ƒGƒ‰[", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+
+            _thumbnailTimer.Stop();
+            _thumbnailTimer.Start();
+        }
+
+        private void ThumbnailTimer_Tick(object? sender, EventArgs e)
+        {
+            _thumbnailTimer.Stop();
+            ClearThumbnails();
+        }
+
+        private void ClearThumbnails()
+        {
+            for (int i = 0; i < _thumbnailBoxes.Length; i++)
+            {
+                _thumbnailBoxes[i].InvokeIfRequired(() =>
+                {
+                    _thumbnailBoxes[i].Image?.Dispose();
+                    _thumbnailBoxes[i].Image = null;
+                    _thumbnailBoxes[i].Visible = false;
+                });
+            }
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            base.OnFormClosing(e);
+
+            WriteLog("Application closing: Releasing cameras...");
+
+            _cameraOpenFlag = false;
+            _previewWorker.CancelAsync();
+            _cameraCts?.Cancel();
+
+            try { if (_frameTasks != null) Task.WaitAll(_frameTasks.Where(t => t != null).ToArray(), 2000); }
+            catch { }
+
+            for (int i = 0; i < MaxCameraCount; i++)
+            {
+                try { _previewBoxes[i].Image?.Dispose(); } catch { }
+                try { _thumbnailBoxes[i].Image?.Dispose(); } catch { }
+                try { _dispBitmaps[i]?.Dispose(); } catch { }
+                try { _latestFrames[i]?.Dispose(); } catch { }
+                try { _captures[i]?.Release(); } catch { }
+            }
+
+            _cameraCts?.Dispose();
+            _cameraCts = null;
+
+            WriteLog("Application closed");
+        }
+
+        private void WriteLog(string message)
+        {
+            try
+            {
+                var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} | {message}";
+                File.AppendAllText(_logFilePath, line + Environment.NewLine);
+                Debug.WriteLine(line);
+            }
+            catch { }
+        }
+
+        private void WriteDiagnostic(string message)
+        {
+            try
+            {
+                lock (_diagLock) { File.AppendAllText(_diagnosticFilePath, message + Environment.NewLine); }
+                Debug.WriteLine("DIAG: " + message);
+            }
+            catch { }
+        }
+    }
+
+    static class ControlExtensions
+    {
+        public static void InvokeIfRequired(this Control c, Action action)
+        {
+            if (c == null || c.IsDisposed) return;
+            if (c.InvokeRequired)
+            {
+                try { c.Invoke(action); } catch { }
+            }
+            else
+            {
+                try { action(); } catch { }
+            }
+        }
+    }
 }
