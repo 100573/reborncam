@@ -12,6 +12,9 @@ namespace reborncam
         [STAThread]
         static void Main()
         {
+            // Disable MSMF hardware transforms in OpenCV which can cause unstable behavior with some cameras
+            Environment.SetEnvironmentVariable("OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS", "0");
+
             // To customize application configuration such as set high DPI settings or default font,
             // see https://aka.ms/applicationconfiguration.
             ApplicationConfiguration.Initialize();
