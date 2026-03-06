@@ -20,6 +20,8 @@ namespace reborncam
         private System.Windows.Forms.Timer _thumbnailTimer;
         private PictureBox[] _previewBoxes;
         private PictureBox[] _thumbnailBoxes;
+        private Bitmap?[] _placeholderBitmaps = new Bitmap[MaxCameraCount];
+        private Task?[] _reconnectTasks = new Task[MaxCameraCount];
 
         // OpenCV ä÷òA
         private const int MaxCameraCount = 6;
@@ -401,6 +403,8 @@ namespace reborncam
         {
             if (!_cameraAlive[cameraIndex])
             {
+                // start reconnect if not already
+                StartReconnectLoop(cameraIndex);
                 return false;
             }
 
@@ -420,8 +424,12 @@ namespace reborncam
                     {
                         // ÉJÉÅÉâÇ™éÄÇÒÇæ
                         _cameraAlive[cameraIndex] = false;
-                        WriteLog($"Camera {cameraIndex + 1}: Device lost during preview");
-                        WriteDiagnostic(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + $" | Camera {cameraIndex + 1} FAILURE | capture=null");
+                        WriteLog($"Camera {cameraIndex +1}: Device lost during preview");
+                        WriteDiagnostic(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + $" | Camera {cameraIndex +1} FAILURE | capture=null");
+
+                        // show placeholder
+                        SetPlaceholder(cameraIndex, "ñ¢ê⁄ë±", Color.Black, Color.Red);
+                        StartReconnectLoop(cameraIndex);
                         break;
                     }
 
@@ -434,7 +442,9 @@ namespace reborncam
                     {
                         // capture was disposed from shutdown; treat as dead and exit
                         _cameraAlive[cameraIndex] = false;
-                        WriteLog($"Camera {cameraIndex + 1}: capture disposed during read");
+                        WriteLog($"Camera {cameraIndex +1}: capture disposed during read");
+                        SetPlaceholder(cameraIndex, "ñ¢ê⁄ë±", Color.Black, Color.Red);
+                        StartReconnectLoop(cameraIndex);
                         break;
                     }
 
@@ -442,8 +452,11 @@ namespace reborncam
                     {
                         // ì«Ç›çûÇ›é∏îsÇ™ë±Ç≠èÍçáÇÕéÄÇÒÇæÇ∆îªíË
                         _cameraAlive[cameraIndex] = false;
-                        WriteLog($"Camera {cameraIndex + 1}: Frame read failed, marking as dead");
-                        WriteDiagnostic(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + $" | Camera {cameraIndex + 1} FAILURE | capture=null");
+                        WriteLog($"Camera {cameraIndex +1}: Frame read failed, marking as dead");
+                        WriteDiagnostic(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + $" | Camera {cameraIndex +1} FAILURE | capture=null");
+
+                        SetPlaceholder(cameraIndex, "ñ¢ê⁄ë±", Color.Black, Color.Red);
+                        StartReconnectLoop(cameraIndex);
                         break;
                     }
 
@@ -453,7 +466,9 @@ namespace reborncam
                 catch (Exception ex)
                 {
                     _cameraAlive[cameraIndex] = false;
-                    WriteLog($"Camera {cameraIndex + 1}: Exception in frame loop - {ex.Message}");
+                    WriteLog($"Camera {cameraIndex +1}: Exception in frame loop - {ex.Message}");
+                    SetPlaceholder(cameraIndex, "ñ¢ê⁄ë±", Color.Black, Color.Red);
+                    StartReconnectLoop(cameraIndex);
                     break;
                 }
             }
@@ -462,6 +477,100 @@ namespace reborncam
             // don't dispose here if cancellation is not requested; disposal will be handled on shutdown
             try { cap?.Dispose(); } catch { }
             return true;
+        }
+
+        private void StartReconnectLoop(int cameraIndex)
+        {
+            lock (_reconnectTasks)
+            {
+                if (_reconnectTasks[cameraIndex] != null && !_reconnectTasks[cameraIndex].IsCompleted) return;
+
+                _reconnectTasks[cameraIndex] = Task.Run(async () =>
+                {
+                    int attempt =0;
+                    while (_cameraOpenFlag && !_cameraAlive[cameraIndex])
+                    {
+                        attempt++;
+                        // cycle dots1..3
+                        int dots = ((attempt -1) %3) +1;
+                        var dotsStr = new string('.', dots);
+                        // show reconnecting placeholder without attempt number
+                        SetPlaceholder(cameraIndex, $"çƒê⁄ë±íÜ{dotsStr}", Color.Black, Color.Yellow);
+                        WriteLog($"Camera {cameraIndex +1}: Reconnect attempt {attempt}");
+
+                        try
+                        {
+                            var ok = await Task.Run(() => OpenCameraDevice(cameraIndex));
+                            if (ok)
+                            {
+                                _cameraAlive[cameraIndex] = true;
+                                UpdateCameraStatus(cameraIndex);
+                                // start frame loop for this camera
+                                var token = _cameraCts?.Token ?? CancellationToken.None;
+                                _frameTasks![cameraIndex] = Task.Run(() => GetCameraFrameLoop(cameraIndex, token), token);
+                                // clear placeholder
+                                ClearPlaceholder(cameraIndex);
+                                WriteLog($"Camera {cameraIndex +1}: Reconnected successfully");
+                                break;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            WriteLog($"Camera {cameraIndex +1}: Reconnect attempt exception - {ex.Message}");
+                        }
+
+                        await Task.Delay(2000);
+                    }
+                });
+            }
+        }
+
+        private void SetPlaceholder(int idx, string text, Color bg, Color fg)
+        {
+            try
+            {
+                if (idx <0 || idx >= _previewBoxes.Length) return;
+                var pb = _previewBoxes[idx];
+                if (pb == null) return;
+
+                pb.InvokeIfRequired(() =>
+                {
+                    var size = pb.ClientSize;
+                    if (size.Width <=0 || size.Height <=0) return;
+                    _placeholderBitmaps[idx]?.Dispose();
+                    var bmp = new Bitmap(size.Width, size.Height);
+                    using var g = Graphics.FromImage(bmp);
+                    g.Clear(bg);
+                    using var sf = new StringFormat() { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+                    using var font = new Font("MS UI Gothic", Math.Max(12, Math.Min(size.Width, size.Height) /10), FontStyle.Bold);
+                    using var brush = new SolidBrush(fg);
+                    g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+                    g.DrawString(text, font, brush, new RectangleF(0,0, size.Width, size.Height), sf);
+                    _placeholderBitmaps[idx] = bmp;
+                    // set immediately
+                    pb.Image?.Dispose();
+                    pb.Image = (Bitmap)bmp.Clone();
+                });
+            }
+            catch { }
+        }
+
+        private void ClearPlaceholder(int idx)
+        {
+            try
+            {
+                if (idx <0 || idx >= _previewBoxes.Length) return;
+                var pb = _previewBoxes[idx];
+                if (pb == null) return;
+                pb.InvokeIfRequired(() =>
+                {
+                    pb.Image?.Dispose();
+                    pb.Image = null;
+                    _placeholderBitmaps[idx]?.Dispose();
+                    _placeholderBitmaps[idx] = null;
+                });
+            }
+            catch { }
         }
 
         private void PreviewWorker_DoWork(object? sender, DoWorkEventArgs e)
@@ -484,18 +593,23 @@ namespace reborncam
         {
             // å√Ç¢âÊëúÇï€éùÇµÇƒå„Ç≈îjä¸
             Image[] oldImages = new Image[MaxCameraCount];
-            for (int i = 0; i < MaxCameraCount; i++)
+            for (int i =0; i < MaxCameraCount; i++)
             {
                 oldImages[i] = _previewBoxes[i].Image;
             }
 
             // ç≈êVÉtÉåÅ[ÉÄÇ Bitmap Ç…ïœä∑ÇµÇƒï\é¶
-            for (int i = 0; i < MaxCameraCount; i++)
+            for (int i =0; i < MaxCameraCount; i++)
             {
                 if (!_cameraAlive[i])
                 {
                     _dispBitmaps[i] = null;
                     UpdateCameraStatus(i);
+                    // if placeholder exists, show it
+                    if (_placeholderBitmaps[i] != null)
+                    {
+                        _previewBoxes[i].Image = (Bitmap)_placeholderBitmaps[i].Clone();
+                    }
                     continue;
                 }
 
@@ -516,7 +630,7 @@ namespace reborncam
             }
 
             // UI Ç…îΩâf
-            for (int i = 0; i < MaxCameraCount; i++)
+            for (int i =0; i < MaxCameraCount; i++)
             {
                 if (_dispBitmaps[i] != null)
                 {
@@ -524,12 +638,14 @@ namespace reborncam
                 }
                 else
                 {
-                    _previewBoxes[i].Image = null;
+                    // if placeholder exists it was set above; otherwise clear
+                    if (_placeholderBitmaps[i] == null)
+                        _previewBoxes[i].Image = null;
                 }
             }
 
             // å√Ç¢âÊëúÇîjä¸
-            for (int i = 0; i < oldImages.Length; i++)
+            for (int i =0; i < oldImages.Length; i++)
             {
                 oldImages[i]?.Dispose();
             }
